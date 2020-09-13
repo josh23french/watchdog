@@ -14,7 +14,8 @@ import (
 	"github.com/prometheus/alertmanager/template"
 )
 
-type WebhookMessage struct {
+// webhookMessage is the message we expect to see from Alertmanager.
+type webhookMessage struct {
 	*template.Data
 
 	Version string `json:"version"`
@@ -23,7 +24,7 @@ type WebhookMessage struct {
 var lastReceivedTime int64
 
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
-	var webhookData WebhookMessage
+	var webhookData webhookMessage
 	gotWatchdog := false
 
 	err := json.NewDecoder(r.Body).Decode(&webhookData)
@@ -74,6 +75,7 @@ func main() {
 
 	lastReceivedTime = time.Now().UnixNano()
 
+	// Signals
 	go func() {
 		sig := <-sigs
 		fmt.Println()
@@ -81,12 +83,14 @@ func main() {
 		done <- true
 	}()
 
+	// HTTP
 	go func() {
 		http.HandleFunc("/webhook", handleWebhook)
 		log.Printf("server starting on %s...\n", *listen)
 		log.Fatal(http.ListenAndServe(*listen, nil))
 	}()
 
+	// Watchdog
 	go func() {
 		var lastSentTime int64 = 0
 		for {
