@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -56,7 +57,7 @@ alertLoop:
 
 	if gotWatchdog {
 		lastReceivedTime = time.Now().UnixNano()
-		log.Printf("Got webhook from %s; reset watchdog\n", webhookData.ExternalURL)
+		log.Printf("Got webhook from %s (%s); reset watchdog\n", r.RemoteAddr, webhookData.ExternalURL)
 	} else {
 		log.Printf("Got webhook, but no alerts labeled alertname=Watchdog")
 	}
@@ -67,14 +68,6 @@ func main() {
 	done := make(chan bool, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	listen := flag.String("listen", ":8080", "ip:port to listen on")
-	watchdogTTLSeconds := flag.Int64("ttl", 30, "seconds to wait before alerting")
-	resendSeconds := flag.Int64("resend", 300, "seconds to wait before re-sending an alert")
-
-	flag.Parse()
-
-	lastReceivedTime = time.Now().UnixNano()
-
 	// Signals
 	go func() {
 		sig := <-sigs
@@ -82,6 +75,16 @@ func main() {
 		log.Println(sig)
 		done <- true
 	}()
+
+	listen := flag.String("listen", ":8080", "ip:port to listen on")
+	watchdogTTLSeconds := flag.Int64("ttl", 30, "seconds to wait before alerting")
+	resendSeconds := flag.Int64("resend", 900, "seconds to wait before re-sending an alert")
+	reattemptSeconds := flag.Int64("reattempt", 10, "seconds to wait before re-attempting to send an alert that previously failed")
+
+	flag.Parse()
+
+	// Gets set to startup time
+	lastReceivedTime = time.Now().UnixNano()
 
 	// HTTP
 	go func() {
@@ -93,13 +96,23 @@ func main() {
 	// Watchdog
 	go func() {
 		var lastSentTime int64 = 0
+		var lastSendAttemptTime int64 = 0
 		for {
 			now := time.Now().UnixNano()
 			if lastReceivedTime < now-(*watchdogTTLSeconds*int64(time.Second)) {
 				// Watchdog alert has not come in time
-				if lastSentTime < now-(*resendSeconds*int64(time.Second)) {
+				if lastSentTime < now-(*resendSeconds*int64(time.Second)) &&
+					lastSendAttemptTime < now-(*reattemptSeconds*int64(time.Second)) {
+
+					lastSendAttemptTime = now
 					log.Println("Woof! WOOF!")
-					lastSentTime = now
+					cmd := exec.Command("say", "-v", "Xander", "woof", "woof", "woof")
+					err := cmd.Start()
+					if err != nil {
+						log.Printf("Error sending alert: %v", err)
+					} else {
+						lastSentTime = now
+					}
 				}
 			}
 			time.Sleep(1 * time.Second)
