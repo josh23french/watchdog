@@ -24,6 +24,7 @@ var lastReceivedTime int64
 
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	var webhookData WebhookMessage
+	gotWatchdog := false
 
 	err := json.NewDecoder(r.Body).Decode(&webhookData)
 	if err != nil {
@@ -31,25 +32,33 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var alertname string
-
 	alerts := webhookData.Alerts
+
+	// Label the loop so we can break out all the way
+alertLoop:
 	for _, a := range alerts {
 		for k, v := range a.Labels {
-			if k == "alertname" {
-				alertname = v
+			if k == "alertname" && v == "Watchdog" {
+				gotWatchdog = true
+				break alertLoop
 			}
 		}
 	}
 
 	labels := webhookData.CommonLabels
 	for k, v := range labels {
-		if k == "alertname" {
-			alertname = v
+		if k == "alertname" && v == "Watchdog" {
+			lastReceivedTime = time.Now().UnixNano()
+			break
 		}
 	}
-	lastReceivedTime = time.Now().UnixNano()
-	log.Printf("Got alerts: %s\n", alertname)
+
+	if gotWatchdog {
+		lastReceivedTime = time.Now().UnixNano()
+		log.Printf("Got webhook from %s; reset watchdog\n", webhookData.ExternalURL)
+	} else {
+		log.Printf("Got webhook, but no alerts labeled alertname=Watchdog")
+	}
 }
 
 func main() {
